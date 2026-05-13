@@ -1,11 +1,11 @@
 version: 2
 sources:
   - name: niyyah_tracks
-    database: niyyah tracks MVP
-    schema: public
+    database: project-4a015a49-6bde-48f1-a3c
+    schema: niyyahtrack
     tables: 
       - name: donor
       - name: charity
       - name: project
       - name: testimonials
-      - name: donation 
+      - name: donation

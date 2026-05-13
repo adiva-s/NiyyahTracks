@@ -1,41 +1,144 @@
-# NiyyahTracks — Zakat & Charity Analytics Pipeline
+# NiyyahTrack — Zakat & Charity Analytics Pipeline
 
-## Overview
-NiyyahTracks is an analytics engineering project designed to model and analyze charitable giving data. The system transforms raw data related to donations, projects, donors, and testimonials into structured models and meaningful metrics that evaluate the impact and efficiency of charitable initiatives.
-<br><br>
-This project focuses on building a clean data pipeline using dbt and PostgreSQL, following best practices in data modeling and analytics engineering.
+A cloud-native analytics engineering pipeline for tracking Islamic charitable giving. NiyyahTrack transforms raw donation data into structured models and business metrics that measure the impact and efficiency of charitable initiatives.
 
-## Objectives
-- Design a relational database for tracking charity and zakat data
-- Transform raw data into clean, analysis-ready models
-- Define meaningful business metrics for evaluating impact
-- Apply analytics engineering workflows using dbt
-  
-## Data Model
+---
+
+## v2 — Cloud Pipeline (Current)
+
+v2 migrates the full pipeline from local PostgreSQL to Google Cloud Platform, introducing BigQuery as the data warehouse and Apache Airflow as the orchestration layer.
+
+### What Changed
+
+| | v1 (PostgreSQL) | v2 (BigQuery + Airflow) |
+|---|---|---|
+| Storage | Local PostgreSQL | Google BigQuery |
+| Orchestration | Manual | Apache Airflow (Dockerized) |
+| Seeding | psycopg2 script | BigQuery Python client |
+| Transformation | dbt-postgres | dbt-bigquery |
+| Auth | Password | Application Default Credentials (ADC) |
+| Schedule | On demand | Daily (automated) |
+
+### Architecture
+
+```
+seed.py (Faker + BigQuery client)
+    │
+    ▼
+BigQuery: niyyahtrack dataset
+    │  raw tables: donor, charity, project, testimonials, donation
+    │
+    ▼
+dbt run (staging → marts)
+    │  stg_donors, stg_charity, stg_project, stg_testimonials, stg_donation
+    │  dim_donors, dim_projects, fct_donations
+    │
+    ▼
+dbt test (data quality validation)
+
+All three steps orchestrated daily by Apache Airflow
+```
+
+### Tech Stack (v2)
+
+- **Google BigQuery** — cloud data warehouse
+- **Apache Airflow** (Docker + CeleryExecutor) — pipeline orchestration and scheduling
+- **dbt** (dbt-bigquery) — data transformation and modelling
+- **Python** (Faker, google-cloud-bigquery, pandas) — synthetic data generation and BigQuery loading
+- **Docker** — containerized Airflow environment
+
+### Airflow DAG
+
+The `niyyahtrack_dbt` DAG runs daily and orchestrates three tasks in sequence:
+
+```
+seed_bigquery → dbt_run → dbt_test
+```
+
+- **seed_bigquery** — generates 50 rows per table using Faker and loads to BigQuery with `WRITE_TRUNCATE`
+- **dbt_run** — executes staging and mart models against BigQuery
+- **dbt_test** — validates data quality (nulls, uniqueness, referential integrity)
+
+### Setup (v2)
+
+#### Prerequisites
+- Docker Desktop
+- Google Cloud account with BigQuery API enabled
+- gcloud CLI installed and authenticated
+
+#### 1. Authenticate with GCP
+```bash
+gcloud auth application-default login \
+  --scopes="https://www.googleapis.com/auth/cloud-platform"
+```
+
+#### 2. Create BigQuery dataset
+In GCP Console → BigQuery → create a dataset named `niyyahtrack`.
+
+#### 3. Configure dbt profile
+In `~/.dbt/profiles.yml`:
+```yaml
+niyyah_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: your-gcp-project-id
+      dataset: niyyahtrack
+      threads: 4
+      timeout_seconds: 300
+      location: US
+```
+
+#### 4. Build and run
+```bash
+docker compose build
+docker compose up -d
+```
+
+#### 5. Trigger the DAG
+Open `http://localhost:8080`, find `niyyahtrack_dbt`, and trigger manually or let it run on its daily schedule.
+
+---
+
+## v1 — Local Pipeline (Original)
+
+The original version of NiyyahTrack was built on PostgreSQL and dbt-postgres, focused on designing the relational schema and analytics layer from scratch.
+
+### Tech Stack (v1)
+
+- **PostgreSQL** — relational database for raw data storage
+- **Python** (psycopg2, Faker) — synthetic data generation and database seeding
+- **dbt** (dbt-postgres) — data transformation and modelling
+- **pgAdmin 4** — database management and query execution
+
+### Data Model
+
 The system is built around the following core entities:
+
 - **Projects** — charitable initiatives
 - **Donations** — contributions made toward projects
 - **Donors** — individuals making donations
 - **Testimonials** — qualitative feedback linked to projects
 
-## ERD
-![Niyyah Tracks ERD](./assets/niyyah_tracks_erd.png)
-This schema models the relationships between donors, projects, donations, and testimonials, enabling structured analysis of charitable impact and efficiency.
-## Tech Stack
-- **PostgreSQL** — relational database for raw data storage
-- **Python** (psycopg2, Faker) — synthetic data generation and database seeding
-- **dbt** (data build tool) — data transformation and modelling
-- **pgAdmin 4** — database management and query execution
+### ERD
 
-## dbt Pipeline
-The project follows a layered dbt architecture:<br>
-**1. Staging Layer:** 5 models — one per raw table<br>
+![Niyyah Tracks ERD](./assets/niyyah_tracks_erd.png)
+
+### dbt Pipeline
+
+Layered dbt architecture:
+
+**1. Staging Layer:** 5 models — one per raw table
+
 **2. Mart Layer**
 - `dim_donors` — donor dimension table
 - `dim_projects` — project dimension table with charity name joined in
 - `fct_donations` — fact table joining donations with donor, project, and charity info
 
-## Analysis Queries
+### Analysis Queries
+
 Five analysis queries built on top of `fct_donations`:
 
 1. **Total raised per project** — which projects attract the most donations
@@ -44,7 +147,6 @@ Five analysis queries built on top of `fct_donations`:
 4. **Repeat donors** — donors who gave more than once (retention metric)
 5. **Cost per beneficiary** — total raised per project divided by number of testimonials (impact metric)
 
-### Example Queries
 ```sql
 -- Cost per beneficiary
 WITH total_donations AS (
@@ -64,36 +166,53 @@ FROM count_testimonials c
 JOIN total_donations ON c.project_name = total_donations.project_name
 ```
 
-## Key Metric
-#### Cost per Beneficiary
-A derived metric used to evaluate the efficiency of charitable projects:
+### Key Metric
+
+**Cost per Beneficiary** — a derived metric to evaluate charitable project efficiency:
 `cost_per_beneficiary = total_donations ÷ number_of_testimonials`
-This metric provides a proxy for impact by comparing financial input to recorded outcomes.
-## Setup
+
+### Setup (v1)
+
 #### Prerequisites
-- PostgreSQL 18
+- PostgreSQL 16+
 - Python 3.11+
 - dbt-postgres
+
 #### Installation
-`pip install psycopg2-binary faker python-dotenv dbt-postgres`
+```bash
+pip install psycopg2-binary faker python-dotenv dbt-postgres
+```
+
 #### Environment Variables
-Create a .env file in the project root:
-`DB_PASSWORD=your_postgres_password`
+Create a `.env` file in the project root:
+```
+DB_PASSWORD=your_postgres_password
+```
+
 #### Database Setup
-Run the schema file in pgAdmin or psql:
-`\i sql/schema.sql`
+```bash
+\i sql/schema.sql
+```
+
 #### Seed Data
-`python data/seed.py`
+```bash
+python data/seed.py
+```
+
 #### dbt
-```git 
+```bash
 cd niyyah_dbt
 dbt run
 ```
 
+---
+
 ## Key Learnings
-- Built an end-to-end analytics pipeline using dbt and PostgreSQL  
-- Designed a relational schema to model donations, projects, and testimonials  
-- Applied layered data modeling (staging → marts) using `source()` and `ref()`  
-- Developed business-oriented metrics such as cost per beneficiary  
-- Strengthened SQL skills including joins, aggregations, and CTEs  
-- Learned how to structure data for meaningful analysis rather than raw querying  
+
+- Migrated a local PostgreSQL pipeline to a fully cloud-native GCP architecture
+- Configured Application Default Credentials (ADC) for secure Airflow ↔ BigQuery authentication
+- Orchestrated a multi-step data pipeline (seed → transform → test) using Apache Airflow with CeleryExecutor
+- Applied layered dbt modeling (staging → marts) on BigQuery using `source()` and `ref()`
+- Dockerized the full Airflow environment with custom image builds and volume mounts
+- Designed business-oriented metrics (cost per beneficiary, donation type breakdown) for charitable impact analysis
+- Built an end-to-end analytics pipeline from schema design to cloud deployment
